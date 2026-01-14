@@ -8,8 +8,9 @@
 #include <stdio.h>
 using namespace glm;
 
-const int window_width = 800;
-const int window_height = 600;
+const int WINDOW_WIDTH = 800;
+const int WINDOW_HEIGHT = 600;
+const int TARGET_FPS = 60;
 
 float square(const float);
 
@@ -42,7 +43,7 @@ struct engine {
 // Display coordinates are coordinates which describe where on the screen objects are rendered (pixels).
 struct view {
 
-  mat3 view = glm::translate(glm::scale(mat3(1.), vec2(1, -1)), vec2(window_width / 2, -window_height / 2));
+  mat3 view = glm::translate(glm::scale(mat3(1.), vec2(1, -1)), vec2(WINDOW_WIDTH / 2, -WINDOW_HEIGHT / 2));
   void translate(const vec2& vec) { view = glm::translate(view, vec); }
   void scale(const float& value) { view = glm::scale(view, vec2(value, value)); }
 
@@ -129,8 +130,8 @@ int main() {
   engine engine;
   view view;
 
-  InitWindow(window_width, window_height, "Piston");
-  SetTargetFPS(60);
+  InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Piston");
+  SetTargetFPS(TARGET_FPS);
 
   // Smooth zoom
   float zoom_speed = 0;
