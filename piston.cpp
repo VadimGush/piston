@@ -1,4 +1,6 @@
 #include "raylib.h"
+// I prefer math types and functions from GLSL, therefore I use GLM
+// instead of whatever math functionality provided by Raylib.
 #include "glm/vec2.hpp"
 #include "glm/common.hpp"
 #include "glm/trigonometric.hpp"
@@ -8,12 +10,15 @@
 #include <stdio.h>
 using namespace glm;
 
+const float EPSILON = 0.001f;
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
 const int TARGET_FPS = 60;
 
-float square(const float);
+bool is_zero(const float a) { return abs(a) < EPSILON; }
+float square(const float a) { return a * a; }
 
+// Defines the engine state / dimensions / parameters
 struct engine {
   
   struct crankshaft {
@@ -73,6 +78,8 @@ struct view {
 
 };
 
+// Defines the calculated position of the piston. Depending on whether the
+// piston position can be calculated at all, the position might be either valid or invalid.
 struct piston_position {
 
   const bool is_valid = false;
@@ -87,6 +94,8 @@ struct piston_position {
   }
 
   static piston_position calculate(const engine& engine) {
+    // Cylinder.direction can be defined as basically any vector of any size,
+    // so make sure that it is always normalized before performing calculations
     const vec2 cylinder_direction = normalize(engine.cylinder.direction);
 
     const float& dx = cylinder_direction.x;
@@ -106,14 +115,12 @@ struct piston_position {
     // there are 2 possible positions for the piston (up and down (vertical cylinder) or left and right (horizontal cylinder)). 
     // We will always choose the largest solution that is in the positive direction of cylinder.direction.
     // If no solutions are found, connecting rod is too short and doesn't reach the cylinder.
-    float t = 0;
     const float discriminant = square(b) - 4 * a * c;
     const float divisor = 2 * a;
-    if (divisor == 0) return piston_position::invalid();
 
-    if (discriminant > 0) t = (-b + sqrt(discriminant)) / divisor;
-    else if (discriminant == 0) t = -b / divisor;
-    else return piston_position::invalid();
+    if (is_zero(divisor)) return piston_position::invalid();
+    if (discriminant < 0) return piston_position::invalid();
+    const float t = (-b + sqrt(discriminant)) / divisor;
 
     return piston_position::valid(engine.cylinder.origin + cylinder_direction * t);
   }
@@ -142,6 +149,7 @@ int main() {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
+    // TODO: Delta should be in seconds, this way we can defined any speed as <something>/second.
     const float delta = GetFrameTime() / 0.016f;
 
     // Update angle of the crankshaft
@@ -273,5 +281,3 @@ void draw_piston(const view& view, const engine& params, const vec2& piston_posi
 
   draw_rectangle(view, start, end, 50, color);
 }
-
-inline float square(const float a) { return a * a; }
