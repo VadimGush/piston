@@ -20,28 +20,88 @@ const int TARGET_FPS = 60;
 bool is_zero(const float a) { return abs(a) < EPSILON; }
 float square(const float a) { return a * a; }
 
-// Defines the engine state / dimensions / parameters
+// ============ ENGINE CALCULATION STRUCTURES =============
+
+// Defines main components of the internal combustion engine 
+// and its dimensions as well as other parameters.
 struct engine {
   
   struct crankshaft {
-    // Distance between the center of the crankshaft
-    // and the large end of the connecting rod.
-    float radius = 50;
+    // Crank radius is the distance between the center of
+    // the crankshaft and the crankpin
+    float crank_radius = 50;
+    vec2 crankpin_position = vec2{0,0};
     float angle = 0;
   };
+  crankshaft crankshaft;
 
-  // Position of the cylinder is defined by 2 vectors.
+  // Position and orientation of the cylinder is defined by 2 vectors.
   // Those vectors describe a 2D ray on which cylinder is positioned.
   // Piston will move along that 2D ray in the positive direction.
   struct cylinder {
     vec2 origin = vec2(0, 0);
     vec2 direction = vec2(0, 20);
   };
-
-  crankshaft crank;
   cylinder cylinder;
-  float connecting_rod_length = 70;
+
+  // Position of the piston might exist or not exist 
+  // If engine dimensions do not allow piston to reach the cylinder,
+  // there is no piston position to be found
+  struct piston {
+    vec2 position = vec2(0,0);
+    bool exists = false;
+  };
+  piston piston;
+
+  float connecting_rod_length = 100;
+
+  // Calculates the positon of the crankpin and the position of the piston
+  void calculate_positions() {
+    crankshaft.crankpin_position = vec2{
+      cos(crankshaft.angle) * crankshaft.crank_radius, 
+      sin(crankshaft.angle) * crankshaft.crank_radius
+    };
+    const vec2 cylinder_direction = normalize(cylinder.direction);
+
+    // TODO: Reevalute this equation considering that crankpin_position is already calculated
+    const float& dx = cylinder_direction.x;
+    const float& dy = cylinder_direction.y;
+    const float& lx = cylinder.origin.x;
+    const float& ly = cylinder.origin.y;
+    const float& r = crankshaft.crank_radius;
+    const float& rcr = connecting_rod_length;
+    const float& alpha = crankshaft.angle;
+
+    const float rcos = r * cos(alpha);
+    const float rsin = r * sin(alpha);
+    const float a = square(dx) + square(dy);
+    const float b = 2 * (lx * dx + ly * dy - dx * rcos - dy * rsin);
+    const float c = square(lx) + square(ly) - 2 * lx * rcos - 2 * ly * rsin - square(rcr) + square(r);
+
+    // The equation is quadratic, which means it has 2 solutions. That makes sense, considering that
+    // there are 2 possible positions for the piston 
+    // (up and down (vertical cylinder) or left and right (horizontal cylinder)). 
+    // We will always choose the largest solution that is in the positive direction of cylinder.direction.
+    // If no solutions are found, connecting rod is too short and doesn't reach the cylinder.
+    const float discriminant = square(b) - 4 * a * c;
+    const float divisor = 2 * a;
+
+    if (is_zero(divisor)) {
+      piston.exists = false;
+      return;
+    }
+    if (discriminant < 0) {
+      piston.exists = false;
+      return;
+    }
+
+    const float t = (-b + sqrt(discriminant)) / divisor;
+    piston.position = cylinder.origin + cylinder_direction * t;
+    piston.exists = true;
+  }
 };
+
+// ================== RENDER STRUCTURES ===================
 
 // Defines a 2D camera which can be scaled, moved around and rotated.
 // There are 2 type of coordinates: world coordinates and display coordinates.
@@ -79,56 +139,6 @@ struct view {
 
 };
 
-// Defines the calculated position of the piston. Depending on whether the
-// piston position can be calculated at all, the position might be either valid or invalid.
-struct piston_position {
-
-  const bool is_valid = false;
-  const vec2 value = vec2(0,0);
-
-  static piston_position invalid() {
-    return {false, vec2(0,0)};
-  }
-
-  static piston_position valid(const vec2& position) {
-    return {true, position};
-  }
-
-  // Piston position is a quadratic function of the crankshaft angle
-  static piston_position calculate(const engine& engine) {
-    // Cylinder.direction can be defined as basically any vector of any size,
-    // so make sure that it is always normalized before performing calculations
-    const vec2 cylinder_direction = normalize(engine.cylinder.direction);
-
-    const float& dx = cylinder_direction.x;
-    const float& dy = cylinder_direction.y;
-    const float& lx = engine.cylinder.origin.x;
-    const float& ly = engine.cylinder.origin.y;
-    const float& r = engine.crank.radius;
-    const float& rcr = engine.connecting_rod_length;
-    const float& alpha = engine.crank.angle;
-
-    // See README.md on how to derive the following equations
-    const float a = square(dx) + square(dy);
-    const float b = 2 * (lx * dx + ly * dy - r * dx * cos(alpha) - r * dy * sin(alpha));
-    const float c = square(lx) + square(ly) - 2 * r * lx * cos(alpha) - 2 * r * ly * sin(alpha) - square(rcr) + square(r);
-
-    // The equation is quadratic, which means it has 2 solutions. That makes sense, considering that
-    // there are 2 possible positions for the piston (up and down (vertical cylinder) or left and right (horizontal cylinder)). 
-    // We will always choose the largest solution that is in the positive direction of cylinder.direction.
-    // If no solutions are found, connecting rod is too short and doesn't reach the cylinder.
-    const float discriminant = square(b) - 4 * a * c;
-    const float divisor = 2 * a;
-
-    if (is_zero(divisor)) return piston_position::invalid();
-    if (discriminant < 0) return piston_position::invalid();
-    const float t = (-b + sqrt(discriminant)) / divisor;
-
-    return piston_position::valid(engine.cylinder.origin + cylinder_direction * t);
-  }
-
-};
-
 // Describes the state of the UI components
 struct interface {
   enum class component {
@@ -144,13 +154,25 @@ struct interface {
   // other UI components will basically ignore any mouse inputs.
   // As soon as mouse released, the active component is reset.
   component active_component = component::NONE;
+
+  // Set an active component only if no component is active
+  void set_active(component c) {
+    if (active_component == component::NONE)
+      active_component = c;
+  }
+
+  bool is_active(component c) {
+    return active_component == c;
+  }
 };
 
 void draw_coordinates(const view&);
 void draw_cylinder_guides(interface& interface, const view&, engine&);
 void draw_crankshaft(const view&, const engine&);
-void draw_connecting_rod(const view& view, const engine&, const vec2&);
-void draw_piston(const view&, const engine&, const vec2&);
+void draw_connecting_rod(const view& view, const engine&);
+void draw_piston(const view&, const engine&);
+
+// ================= MAIN IMPLEMENTATION ==================
 
 int main() {
   engine engine;
@@ -175,15 +197,15 @@ int main() {
 
     // === UPDATE ==
     const float delta = GetFrameTime() / 0.016f;
-    engine.crank.angle += 0.05 * delta;
+    engine.crankshaft.angle += 0.05 * delta;
+    engine.calculate_positions();
 
     // === RENDER ==
     draw_coordinates(view);
     draw_crankshaft(view, engine);
-    const auto piston_position = piston_position::calculate(engine);
-    if (piston_position.is_valid) {
-      draw_connecting_rod(view, engine, piston_position.value);
-      draw_piston(view, engine, piston_position.value);
+    if (engine.piston.exists) {
+      draw_connecting_rod(view, engine);
+      draw_piston(view, engine);
     }
     if (interface.show_cylinder_guides)
       draw_cylinder_guides(interface, view, engine);
@@ -232,18 +254,18 @@ void draw_cylinder_guides(interface& interface, const view& view, engine& params
 
   // User is moving the origin position of the cylinder guide
   const bool guide_position_active = length(mouse_position - origin) < guide_origin_radius;
-  if (interface.active_component == interface::component::NONE && guide_position_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-    interface.active_component = interface::component::CYLINDER_GUIDE_POSITION;
-  if (interface.active_component == interface::component::CYLINDER_GUIDE_POSITION) {
+  if (guide_position_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    interface.set_active(interface::component::CYLINDER_GUIDE_POSITION);
+  if (interface.is_active(interface::component::CYLINDER_GUIDE_POSITION)) {
     color = Color{100, 100, 255, 255};
     origin = mouse_position;
   } 
 
   // User is moving the direction of the cylinder guide
   const bool guide_direction_active = length(mouse_position - (origin + direction)) < guide_origin_radius;
-  if (interface.active_component == interface::component::NONE && guide_direction_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-    interface.active_component = interface::component::CYLINDER_GUIDE_DIRECTION;
-  if (interface.active_component == interface::component::CYLINDER_GUIDE_DIRECTION) {
+  if (guide_direction_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    interface.set_active(interface::component::CYLINDER_GUIDE_DIRECTION);
+  if (interface.is_active(interface::component::CYLINDER_GUIDE_DIRECTION)) {
     color = Color{100, 100, 255, 255};
     direction = mouse_position - origin;
   } 
@@ -290,32 +312,30 @@ void draw_rectangle(const view& view, const vec2& start, const vec2& end, const 
   );
 }
 
-void draw_crankshaft(const view& view, const engine& params) {
+void draw_crankshaft(const view& view, const engine& engine) {
   const Color color{50, 50, 200, 255};
   const vec2 origin = vec2(0, 0);
-  const vec2 crank = vec2(cos(params.crank.angle) * params.crank.radius, sin(params.crank.angle) * params.crank.radius);
   const float bearing_size = 10;
 
   DrawCircleV(view.transform(origin), view.transform(bearing_size), color);
-  draw_rectangle(view, origin, crank, 10, color);
-  DrawCircleV(view.transform(crank), view.transform(bearing_size), color);
+  draw_rectangle(view, origin, engine.crankshaft.crankpin_position, 10, color);
+  DrawCircleV(view.transform(engine.crankshaft.crankpin_position), view.transform(bearing_size), color);
 }
 
-void draw_connecting_rod(const view& view, const engine& params, const vec2& piston_position) {
+void draw_connecting_rod(const view& view, const engine& engine) {
   const Color color{200, 50, 50, 255};
-  const vec2 crank = vec2(cos(params.crank.angle) * params.crank.radius, sin(params.crank.angle) * params.crank.radius);
   const float bearing_size = 10;
 
-  DrawCircleV(view.transform(crank), view.transform(bearing_size), color);
-  draw_rectangle(view, crank, piston_position, 10, color);
-  DrawCircleV(view.transform(piston_position), view.transform(bearing_size), color);
+  DrawCircleV(view.transform(engine.crankshaft.crankpin_position), view.transform(bearing_size), color);
+  draw_rectangle(view, engine.crankshaft.crankpin_position, engine.piston.position, 10, color);
+  DrawCircleV(view.transform(engine.piston.position), view.transform(bearing_size), color);
 }
 
-void draw_piston(const view& view, const engine& params, const vec2& piston_position) {
+void draw_piston(const view& view, const engine& engine) {
   const Color color{50, 200, 50, 255};
   const float piston_length = 30;
-  const vec2 start = piston_position;
-  const vec2 end = piston_position + normalize(params.cylinder.direction) * piston_length;
+  const vec2 start = engine.piston.position;
+  const vec2 end = engine.piston.position + normalize(engine.cylinder.direction) * piston_length;
 
   draw_rectangle(view, start, end, 50, color);
 }
