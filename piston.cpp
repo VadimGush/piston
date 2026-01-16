@@ -174,6 +174,8 @@ void draw_piston(const view&, const engine&);
 
 // ================= MAIN IMPLEMENTATION ==================
 
+// ================= MAIN IMPLEMENTATION ==================
+
 int main() {
   engine engine;
   view view;
