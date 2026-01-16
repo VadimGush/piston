@@ -1,4 +1,6 @@
 #include "raylib.h"
+#define RAYGUI_IMPLEMENTATION
+#include "dependencies/raygui.h"
 // I prefer math types and functions from GLSL, therefore I use GLM
 // instead of whatever math functionality provided by Raylib.
 #include "glm/vec2.hpp"
@@ -39,7 +41,6 @@ struct engine {
   crankshaft crank;
   cylinder cylinder;
   float connecting_rod_length = 70;
-
 };
 
 // Defines a 2D camera which can be scaled, moved around and rotated.
@@ -93,6 +94,7 @@ struct piston_position {
     return {true, position};
   }
 
+  // Piston position is a quadratic function of the crankshaft angle
   static piston_position calculate(const engine& engine) {
     // Cylinder.direction can be defined as basically any vector of any size,
     // so make sure that it is always normalized before performing calculations
@@ -127,8 +129,25 @@ struct piston_position {
 
 };
 
+// Describes the state of the UI components
+struct interface {
+  enum class component {
+    NONE,
+    CYLINDER_GUIDE_DIRECTION,
+    CYLINDER_GUIDE_POSITION
+  };
+
+  bool show_cylinder_guides = true;
+  // When we're dragging something on the screen, we don't want to accidentally
+  // trigger other UI components when mouse cursor goes through them.
+  // For that, we define an active component. If there is an active component set,
+  // other UI components will basically ignore any mouse inputs.
+  // As soon as mouse released, the active component is reset.
+  component active_component = component::NONE;
+};
+
 void draw_coordinates(const view&);
-void draw_cylinder_guides(const view&, engine&);
+void draw_cylinder_guides(interface& interface, const view&, engine&);
 void draw_crankshaft(const view&, const engine&);
 void draw_connecting_rod(const view& view, const engine&, const vec2&);
 void draw_piston(const view&, const engine&, const vec2&);
@@ -136,6 +155,7 @@ void draw_piston(const view&, const engine&, const vec2&);
 int main() {
   engine engine;
   view view;
+  interface interface;
 
   InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Piston");
   SetTargetFPS(TARGET_FPS);
@@ -145,40 +165,53 @@ int main() {
   float zoom_max_speed = 0.05;
   float zoom_dump = 0.8;
 
+  // Smooth camera translate
+  vec2 camera_speed = vec2{0,0};
+  float camera_dumping = 0.8f;
+
   while (!WindowShouldClose()) {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    // TODO: Delta should be in seconds, this way we can defined any speed as <something>/second.
+    // === UPDATE ==
     const float delta = GetFrameTime() / 0.016f;
-
-    // Update angle of the crankshaft
     engine.crank.angle += 0.05 * delta;
 
-    // Render the engine
+    // === RENDER ==
     draw_coordinates(view);
-    draw_cylinder_guides(view, engine);
     draw_crankshaft(view, engine);
-
     const auto piston_position = piston_position::calculate(engine);
     if (piston_position.is_valid) {
       draw_connecting_rod(view, engine, piston_position.value);
       draw_piston(view, engine, piston_position.value);
     }
+    if (interface.show_cylinder_guides)
+      draw_cylinder_guides(interface, view, engine);
 
+    // Reset the active component if the mouse was released
+    if (IsMouseButtonUp(MOUSE_BUTTON_LEFT))
+      interface.active_component = interface::component::NONE;
+
+    // === CONTROL ===
     // Smooth zoom control
     zoom_speed = zoom_speed * (zoom_dump * delta);
-    if (abs(zoom_speed) <= 0.001f) zoom_speed = 0;
+    if (is_zero(abs(zoom_speed))) zoom_speed = 0;
+    // Smooth camera translate
+    camera_speed = camera_speed * (camera_dumping * delta);
+    if (is_zero(length(camera_speed))) camera_speed = vec2{0, 0};
 
     // View control
-    const float move_speed = 5 / view.transform(1);
-    if (IsKeyDown(KEY_W)) view.translate(vec2(0, -move_speed * delta));
-    if (IsKeyDown(KEY_S)) view.translate(vec2(0, move_speed * delta));
-    if (IsKeyDown(KEY_A)) view.translate(vec2(move_speed * delta, 0));
-    if (IsKeyDown(KEY_D)) view.translate(vec2(-move_speed * delta, 0));
+    const float camera_move_speed = 1 / view.transform(1);
+    if (IsKeyDown(KEY_W)) camera_speed += vec2(0, -camera_move_speed);
+    if (IsKeyDown(KEY_S)) camera_speed += vec2(0, camera_move_speed);
+    if (IsKeyDown(KEY_A)) camera_speed += vec2(camera_move_speed, 0);
+    if (IsKeyDown(KEY_D)) camera_speed += vec2(-camera_move_speed, 0);
     const float mouse_wheel = GetMouseWheelMove();
     if (mouse_wheel != 0) zoom_speed = (mouse_wheel / abs(mouse_wheel)) * zoom_max_speed;
-    if (zoom_speed != 0 && !(zoom_speed < 0 && view.transform(1) < 0.1f)) view.scale(1 + (zoom_speed * delta));
+
+    if (!is_zero(length(camera_speed))) view.translate(camera_speed * delta);
+    // The second condition is to prevent the case when we zoom so much, that we invert the camera coordinates
+    if (!is_zero(zoom_speed) && !(zoom_speed < 0 && view.transform(1) < 0.1f)) view.scale(1 + (zoom_speed * delta));
 
     EndDrawing();
   }
@@ -187,27 +220,32 @@ int main() {
   return 0;
 }
 
-void draw_cylinder_guides(const view& view, engine& params) {
+void draw_cylinder_guides(interface& interface, const view& view, engine& params) {
   Color color{150, 150, 175, 255};
 
   vec2& origin = params.cylinder.origin;
   vec2& direction = params.cylinder.direction;
   const float guide_origin_radius = 20;
 
+  // Get position of the mouse in world coordinates
   const vec2 mouse_position = view.inverse_transform(GetMousePosition());
 
   // User is moving the origin position of the cylinder guide
-  if (length(mouse_position - origin) < guide_origin_radius) {
+  const bool guide_position_active = length(mouse_position - origin) < guide_origin_radius;
+  if (interface.active_component == interface::component::NONE && guide_position_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    interface.active_component = interface::component::CYLINDER_GUIDE_POSITION;
+  if (interface.active_component == interface::component::CYLINDER_GUIDE_POSITION) {
     color = Color{100, 100, 255, 255};
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-      origin = mouse_position;
+    origin = mouse_position;
   } 
 
   // User is moving the direction of the cylinder guide
-  if (length(mouse_position - (origin + direction)) < guide_origin_radius) {
+  const bool guide_direction_active = length(mouse_position - (origin + direction)) < guide_origin_radius;
+  if (interface.active_component == interface::component::NONE && guide_direction_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    interface.active_component = interface::component::CYLINDER_GUIDE_DIRECTION;
+  if (interface.active_component == interface::component::CYLINDER_GUIDE_DIRECTION) {
     color = Color{100, 100, 255, 255};
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-      direction = mouse_position - origin;
+    direction = mouse_position - origin;
   } 
 
   // Draw the direction of the cylinder guide
