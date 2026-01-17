@@ -63,7 +63,6 @@ struct engine {
     };
     const vec2 cylinder_direction = normalize(cylinder.direction);
 
-    // TODO: Reevalute this equation considering that crankpin_position is already calculated
     const float& dx = cylinder_direction.x;
     const float& dy = cylinder_direction.y;
     const float& lx = cylinder.origin.x;
@@ -71,9 +70,10 @@ struct engine {
     const float& r = crankshaft.crank_radius;
     const float& rcr = connecting_rod_length;
     const float& alpha = crankshaft.angle;
+    // We've already calculated those values for crankpin position
+    const float& rcos = crankshaft.crankpin_position.x;
+    const float& rsin = crankshaft.crankpin_position.y;
 
-    const float rcos = r * cos(alpha);
-    const float rsin = r * sin(alpha);
     const float a = square(dx) + square(dy);
     const float b = 2 * (lx * dx + ly * dy - dx * rcos - dy * rsin);
     const float c = square(lx) + square(ly) - 2 * lx * rcos - 2 * ly * rsin - square(rcr) + square(r);
@@ -147,6 +147,7 @@ struct interface {
     CYLINDER_GUIDE_POSITION
   };
 
+  MouseCursor cursor = MOUSE_CURSOR_DEFAULT;
   bool show_cylinder_guides = true;
   // When we're dragging something on the screen, we don't want to accidentally
   // trigger other UI components when mouse cursor goes through them.
@@ -164,6 +165,11 @@ struct interface {
   bool is_active(component c) {
     return active_component == c;
   }
+
+  void set_cursor(component c, MouseCursor cursor) {
+    if (active_component == component::NONE || active_component == c)
+      this->cursor = cursor;
+  }
 };
 
 void draw_coordinates(const view&);
@@ -171,8 +177,6 @@ void draw_cylinder_guides(interface& interface, const view&, engine&);
 void draw_crankshaft(const view&, const engine&);
 void draw_connecting_rod(const view& view, const engine&);
 void draw_piston(const view&, const engine&);
-
-// ================= MAIN IMPLEMENTATION ==================
 
 // ================= MAIN IMPLEMENTATION ==================
 
@@ -237,6 +241,11 @@ int main() {
     // The second condition is to prevent the case when we zoom so much, that we invert the camera coordinates
     if (!is_zero(zoom_speed) && !(zoom_speed < 0 && view.transform(1) < 0.1f)) view.scale(1 + (zoom_speed * delta));
 
+    // Update mouse cursor if set
+    SetMouseCursor(interface.cursor);
+    // And reset it back
+    interface.cursor = MOUSE_CURSOR_DEFAULT;
+
     EndDrawing();
   }
 
@@ -244,58 +253,6 @@ int main() {
   return 0;
 }
 
-void draw_cylinder_guides(interface& interface, const view& view, engine& params) {
-  Color color{150, 150, 175, 255};
-
-  vec2& origin = params.cylinder.origin;
-  vec2& direction = params.cylinder.direction;
-  const float guide_origin_radius = 20;
-
-  // Get position of the mouse in world coordinates
-  const vec2 mouse_position = view.inverse_transform(GetMousePosition());
-
-  // User is moving the origin position of the cylinder guide
-  const bool guide_position_active = length(mouse_position - origin) < guide_origin_radius;
-  if (guide_position_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-    interface.set_active(interface::component::CYLINDER_GUIDE_POSITION);
-  if (interface.is_active(interface::component::CYLINDER_GUIDE_POSITION)) {
-    color = Color{100, 100, 255, 255};
-    origin = mouse_position;
-  } 
-
-  // User is moving the direction of the cylinder guide
-  const bool guide_direction_active = length(mouse_position - (origin + direction)) < guide_origin_radius;
-  if (guide_direction_active && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-    interface.set_active(interface::component::CYLINDER_GUIDE_DIRECTION);
-  if (interface.is_active(interface::component::CYLINDER_GUIDE_DIRECTION)) {
-    color = Color{100, 100, 255, 255};
-    direction = mouse_position - origin;
-  } 
-
-  // Draw the direction of the cylinder guide
-  const vec2 line_direction = direction * view.inverse_transform(1000);
-  DrawLineV(view.transform(origin - line_direction), view.transform(origin + line_direction), color);
-
-  // Draw the origin position of the cylinder guide
-  DrawCircleV(view.transform(origin), view.transform(guide_origin_radius), color);
-  DrawCircleV(view.transform(origin), view.transform(guide_origin_radius * 0.8), WHITE);
-
-  // Draw the direction of the cylinder guide as a point on the screen
-  DrawCircleV(view.transform(origin + direction), view.transform(guide_origin_radius), color);
-  DrawCircleV(view.transform(origin + direction), view.transform(guide_origin_radius * 0.8), WHITE);
-}
-
-void draw_coordinates(const view& view) {
-  const Color color{0, 0, 0, 25};
-  const float size = view.inverse_transform(1000);
-  DrawLineV(view.transform(vec2(-size, 0)), view.transform(vec2(size, 0)), color);
-  DrawLineV(view.transform(vec2(0, -size)), view.transform(vec2(0, size)), color);
-
-  for (int i = -1000; i < 1000; i += 10) 
-    DrawLineV(view.transform(vec2(i, -5)), view.transform(vec2(i, 5)), color);
-  for (int i = -1000; i < 1000; i += 10) 
-    DrawLineV(view.transform(vec2(-5, i)), view.transform(vec2(5, i)), color);
-}
 
 void draw_rectangle(const view& view, const vec2& start, const vec2& end, const float width, const Color& color) {
   const vec2 direction = end - start;
@@ -312,6 +269,90 @@ void draw_rectangle(const view& view, const vec2& start, const vec2& end, const 
     view.transform(end + normal * (width/2)),
     color
   );
+}
+
+void draw_arrow(const view& view, const vec2& start, const vec2& end, 
+  const float line_width, const float arrow_width, const float arrow_height, const Color& color) {
+  const vec2 direction = normalize(end - start);
+  const vec2 normal = vec2(-direction.y, direction.x);
+  const vec2 arrow_start = start + direction * (length(end - start) - arrow_height);
+
+  draw_rectangle(view, start, arrow_start, line_width, color);
+
+  DrawTriangle(
+    view.transform(arrow_start - normal * (arrow_width / 2)),
+    view.transform(end),
+    view.transform(arrow_start + normal * (arrow_width / 2)),
+    color
+  );
+}
+
+void draw_cylinder_guides(interface& interface, const view& view, engine& params) {
+  const Color active_color = Color{100, 100, 255, 255};
+  const Color hover_color = Color{125, 125, 220, 255};
+  const Color base_color = Color{150, 150, 175, 255};  
+
+  Color position_color = base_color;
+  Color direction_color = base_color;
+
+  vec2& origin = params.cylinder.origin;
+  vec2& direction = params.cylinder.direction;
+  const vec2 display_direction = origin + normalize(direction) * 100.f;
+  const float guide_origin_radius = 20;
+
+  // Get position of the mouse in world coordinates
+  const vec2 mouse_position = view.inverse_transform(GetMousePosition());
+
+  // User is moving the origin position of the cylinder guide
+  const interface::component position_component = interface::component::CYLINDER_GUIDE_POSITION;
+  const bool guide_position_hover = length(mouse_position - origin) < guide_origin_radius;
+  if (guide_position_hover) {
+    position_color = hover_color;
+    interface.set_cursor(position_component, MOUSE_CURSOR_POINTING_HAND);
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+      interface.set_active(position_component);
+  }
+  if (interface.is_active(position_component)) {
+    position_color = active_color;
+    origin = mouse_position;
+  } 
+
+  // User is moving the direction of the cylinder guide
+  const interface::component direction_component = interface::component::CYLINDER_GUIDE_DIRECTION;
+  const bool guide_direction_hover = length(mouse_position - display_direction) < guide_origin_radius * 2;
+  if (guide_direction_hover) {
+    direction_color = hover_color;
+    interface.set_cursor(direction_component, MOUSE_CURSOR_POINTING_HAND);
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+      interface.set_active(direction_component);
+  }
+  if (interface.is_active(direction_component)) {
+    direction_color = active_color;
+    direction = normalize(mouse_position - origin);
+  } 
+
+
+  // Draw the direction of the cylinder guide
+  const vec2 line_direction = direction * view.inverse_transform(1000);
+  DrawLineV(view.transform(origin - line_direction), view.transform(origin + line_direction), direction_color);
+
+  draw_arrow(view, origin, display_direction, 20, 40, 30, direction_color);
+
+  // Draw the origin position of the cylinder guide
+  DrawCircleV(view.transform(origin), view.transform(guide_origin_radius), position_color);
+  DrawCircleV(view.transform(origin), view.transform(guide_origin_radius * 0.8), WHITE);
+}
+
+void draw_coordinates(const view& view) {
+  const Color color{0, 0, 0, 25};
+  const float size = view.inverse_transform(1000);
+  DrawLineV(view.transform(vec2(-size, 0)), view.transform(vec2(size, 0)), color);
+  DrawLineV(view.transform(vec2(0, -size)), view.transform(vec2(0, size)), color);
+
+  for (int i = -1000; i < 1000; i += 10) 
+    DrawLineV(view.transform(vec2(i, -5)), view.transform(vec2(i, 5)), color);
+  for (int i = -1000; i < 1000; i += 10) 
+    DrawLineV(view.transform(vec2(-5, i)), view.transform(vec2(5, i)), color);
 }
 
 void draw_crankshaft(const view& view, const engine& engine) {
