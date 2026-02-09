@@ -185,6 +185,7 @@ int main() {
   view view;
   interface interface;
 
+  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_ALWAYS_RUN | FLAG_WINDOW_HIGHDPI);
   InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Piston");
   SetTargetFPS(TARGET_FPS);
 
