@@ -3,12 +3,8 @@
 #include "dependencies/raygui.h"
 // I prefer math types and functions from GLSL, therefore I use GLM
 // instead of whatever math functionality provided by Raylib.
-#include "glm/vec2.hpp"
-#include "glm/common.hpp"
-#include "glm/trigonometric.hpp"
-#include "glm/mat3x3.hpp"
-#include "glm/matrix.hpp"
 #include "glm/gtx/matrix_transform_2d.hpp"
+#include "glm/glm.hpp"
 #include <stdio.h>
 using namespace glm;
 
